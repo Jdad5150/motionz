@@ -1,13 +1,11 @@
 const std = @import("std");
 const httpz = @import("httpz");
 
-// Only import C headers on Linux
-const c = if (@import("builtin").os.tag == .linux) @cImport({
-    // Uncomment below line when on Linux
-    //@cInclude("termios.h");
+const c = @cImport({
+    @cInclude("termios.h");
     @cInclude("fcntl.h");
     @cInclude("unistd.h");
-}) else struct {};
+});
 
 const AxisStatus = enum {
     idle,
@@ -109,79 +107,6 @@ fn sendMove(robot: *Robot, req: *httpz.Request, res: *httpz.Response) !void {
 }
 
 fn sendToAxis(robot: *Robot, device: []const u8, axis: u8, value: i64) !void {
-    // ============================================================================
-    // WINDOWS MOCK CODE - Remove this entire block when deploying to Linux/Pi
-    // ============================================================================
-    if (@import("builtin").os.tag != .linux) {
-        std.debug.print("[MOCK] Would send to {s}: {c}:{d}\n", .{ device, axis, value });
-
-        // Spawn thread to simulate gradual movement
-        const Context = struct {
-            robot: *Robot,
-            axis: u8,
-            target: i64,
-        };
-
-        const ctx = try std.heap.page_allocator.create(Context);
-        ctx.* = .{ .robot = robot, .axis = axis, .target = value };
-
-        const thread = try std.Thread.spawn(.{}, struct {
-            fn run(context: *Context) void {
-                defer std.heap.page_allocator.destroy(context);
-
-                const start = switch (context.axis) {
-                    'X' => context.robot.position.x,
-                    'Y' => context.robot.position.y,
-                    'Z' => context.robot.position.z,
-                    else => 0,
-                };
-
-                const steps = 50;
-                const step_size = @divTrunc(context.target - start, steps);
-
-                var i: i32 = 0;
-                while (i < steps) : (i += 1) {
-                    std.Thread.sleep(100 * std.time.ns_per_ms);
-
-                    context.robot.mutex.lock();
-                    switch (context.axis) {
-                        'X' => context.robot.position.x += step_size,
-                        'Y' => context.robot.position.y += step_size,
-                        'Z' => context.robot.position.z += step_size,
-                        else => {},
-                    }
-                    context.robot.mutex.unlock();
-                }
-
-                // Final position and mark as idle
-                context.robot.mutex.lock();
-                defer context.robot.mutex.unlock();
-
-                switch (context.axis) {
-                    'X' => {
-                        context.robot.position.x = context.target;
-                        context.robot.x_status = .idle;
-                    },
-                    'Y' => {
-                        context.robot.position.y = context.target;
-                        context.robot.y_status = .idle;
-                    },
-                    'Z' => {
-                        context.robot.position.z = context.target;
-                        context.robot.z_status = .idle;
-                    },
-                    else => {},
-                }
-            }
-        }.run, .{ctx});
-
-        thread.detach();
-        return;
-    }
-    // ============================================================================
-    // END WINDOWS MOCK CODE
-    // ============================================================================
-
     // Open serial port
     const fd = c.open(device.ptr, c.O_RDWR | c.O_NOCTTY);
     if (fd < 0) return error.CannotOpenSerial;
@@ -210,7 +135,8 @@ fn sendToAxis(robot: *Robot, device: []const u8, axis: u8, value: i64) !void {
 
     // Send command: "X:100\n" or "Y:200\n" or "Z:50\n"
     var buf: [32]u8 = undefined;
-    const msg = try std.fmt.bufPrint(&buf, "{c}:{d}\n", .{ axis, value });
+    const msg = try std.fmt.bufPrint(&buf, "{d}.0\n", .{value});
+
     _ = c.write(fd, msg.ptr, msg.len);
 
     // Read response (blocking until Pico sends "200")

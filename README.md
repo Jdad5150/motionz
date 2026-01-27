@@ -10,14 +10,14 @@ motionz provides a RESTful API for real-time robot arm control and position moni
 
 ```
 ┌─────────────┐         HTTP          ┌──────────────┐
-│   Frontend  │ ◄──────────────────► │  motionz     │
+│   Frontend  │ ◄──────────────────►  │  motionz     │
 │   (Web UI)  │    JSON API           │  (Zig Server)│
 └─────────────┘                       └──────┬───────┘
                                              │ UART
                                              │ (115200 baud)
-                                    ┌────────┼────────┐
-                                    │        │        │
-                                ┌───▼──┐ ┌──▼───┐ ┌──▼───┐
+                                    ┌────────┼───────┐
+                                    │        │       │
+                                ┌───▼──┐ ┌───▼──┐ ┌──▼───┐
                                 │ Pico │ │ Pico │ │ Pico │
                                 │  X   │ │  Y   │ │  Z   │
                                 └──────┘ └──────┘ └──────┘
@@ -29,7 +29,7 @@ motionz provides a RESTful API for real-time robot arm control and position moni
 - **Per-Axis Control**: Independent X, Y, Z axis movement with individual status tracking
 - **Thread-Safe**: Mutex-protected state management for concurrent operations
 - **Real-Time Monitoring**: Poll current position and movement status at any frequency
-- **Cross-Platform Development**: Mock mode for Windows development, production mode for Linux/Pi
+- **Multi-Target Build**: Single build produces binaries for native, Pi 4 64-bit, and Pi 4 32-bit
 - **Asynchronous Movement**: Non-blocking API returns immediately while axes move independently
 
 ## API Endpoints
@@ -76,8 +76,8 @@ Send movement commands to one or more axes.
 
 Communication with Picos uses a simple text-based protocol over UART (115200 baud, 8N1):
 
-**Command Format:** `{AXIS}:{VALUE}\n`
-- Example: `X:1000\n` moves X-axis to position 1000
+**Command Format:** `{VALUE}.0\n`
+- Example: `1000.0\n` moves the axis to position 1000
 
 **Response:** `200\n` when movement completes
 
@@ -89,36 +89,42 @@ Communication with Picos uses a simple text-based protocol over UART (115200 bau
 | Y    | /dev/ttyAMA1   | GPIO 0/1        |
 | Z    | /dev/ttyAMA2   | GPIO 4/5        |
 
-## Development Setup
+## Building
 
 ### Prerequisites
 - [Zig](https://ziglang.org/download/) (latest stable)
 - Python 3.x (for test client)
 - `requests` library: `pip install requests`
 
-### Building
+### Build
 
 ```bash
 zig build
 ```
 
-### Running (Development - Windows)
+This produces binaries for all targets in `zig-out/`:
 
-The server includes a mock mode that simulates gradual axis movement for testing without hardware:
+| Directory | Target |
+|-----------|--------|
+| `native/` | Your current machine |
+| `aarch64/` | Raspberry Pi 4 (64-bit OS) |
+| `arm/` | Raspberry Pi 4 (32-bit OS) |
 
-```bash
-zig-out\bin\motionz.exe
-```
+### Deploying to Raspberry Pi
 
-### Running (Production - Raspberry Pi)
-
-1. Uncomment the `termios.h` include in `src/main.zig` (line 7)
-2. Build on Pi or cross-compile for ARM
-3. Run with appropriate permissions for serial access:
-
-```bash
-sudo ./zig-out/bin/motionz
-```
+1. Build on your dev machine: `zig build`
+2. Transfer the appropriate binary to your Pi:
+   ```bash
+   scp zig-out/aarch64/motionz pi@<pi-ip>:~/
+   ```
+3. Ensure your user has serial permissions (add to `dialout` group):
+   ```bash
+   sudo usermod -a -G dialout $USER
+   ```
+4. Run the server:
+   ```bash
+   ./motionz
+   ```
 
 ## Testing
 
