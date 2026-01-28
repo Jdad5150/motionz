@@ -7,6 +7,15 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
+const server_title =
+    \\___  ___      _   _              ______
+    \\|  \/  |     | | (_)            |___  /
+    \\| .  . | ___ | |_ _  ___  _ __     / /
+    \\| |\/| |/ _ \| __| |/ _ \| '_ \   / /
+    \\| |  | | (_) | |_| | (_) | | | |./ /___
+    \\\_|  |_/\___/ \__|_|\___/|_| |_|\_____/
+;
+
 const AxisStatus = enum {
     idle,
     moving,
@@ -42,11 +51,18 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
+    // Print the banner directly to stdout for proper formatting
+    const stdout = std.posix.STDOUT_FILENO;
+    _ = std.posix.write(stdout, server_title) catch {};
+    _ = std.posix.write(stdout, "\n") catch {};
+
+    std.log.info("Starting motionz server...", .{});
+
     var robot: Robot = .{ .position = .{ .x = 0, .y = 0, .z = 0 }, .status = .startup };
 
-    var server = try httpz.Server(*Robot).init(allocator, .{ .port = 5882 }, &robot);
+    var server = try httpz.Server(*Robot).init(allocator, .{ .port = 5882, .address = "0.0.0.0" }, &robot);
     defer {
-        // clean shutdown, finishes serving any live request
+        std.log.info("Shutting down server...", .{});
         server.stop();
         server.deinit();
     }
@@ -54,10 +70,12 @@ pub fn main() !void {
     // Set to idle after startup
     robot.status = .idle;
 
-    //
     var router = try server.router(.{});
     router.get("/api/position", getPosition, .{});
     router.post("/api/move", sendMove, .{});
+
+    std.log.info("Server listening on http://0.0.0.0:5882", .{});
+    std.log.info("Routes: GET /api/position, POST /api/move", .{});
 
     // blocks
     try server.listen();
@@ -65,6 +83,12 @@ pub fn main() !void {
 
 fn getPosition(robot: *Robot, req: *httpz.Request, res: *httpz.Response) !void {
     _ = req;
+    std.log.info("GET /api/position - pos=({d},{d},{d}) status={s}", .{
+        robot.position.x,
+        robot.position.y,
+        robot.position.z,
+        @tagName(robot.status),
+    });
     res.status = 200;
     try res.json(.{
         .position = robot.position,
@@ -83,23 +107,32 @@ const MoveCommand = struct {
 
 fn sendMove(robot: *Robot, req: *httpz.Request, res: *httpz.Response) !void {
     const body = try req.json(MoveCommand) orelse {
+        std.log.warn("POST /api/move - missing JSON body", .{});
         res.status = 400;
         try res.json(.{ .err = "Missing JSON body" }, .{});
         return;
     };
 
+    std.log.info("POST /api/move - x={?d} y={?d} z={?d}", .{ body.x, body.y, body.z });
+
     // Send commands and update status to moving
     if (body.x) |x| {
         robot.x_status = .moving;
-        try sendToAxis(robot, "/dev/ttyAMA0", 'X', x);
+        sendToAxis(robot, "/dev/serial0", 'X', x) catch |err| {
+            std.log.err("Failed to send X command: {}", .{err});
+        };
     }
     if (body.y) |y| {
         robot.y_status = .moving;
-        try sendToAxis(robot, "/dev/ttyAMA1", 'Y', y);
+        sendToAxis(robot, "/dev/ttyAMA2", 'Y', y) catch |err| {
+            std.log.err("Failed to send Y command: {}", .{err});
+        };
     }
     if (body.z) |z| {
         robot.z_status = .moving;
-        try sendToAxis(robot, "/dev/ttyAMA2", 'Z', z);
+        sendToAxis(robot, "/dev/ttyAMA3", 'Z', z) catch |err| {
+            std.log.err("Failed to send Z command: {}", .{err});
+        };
     }
 
     res.status = 200;
@@ -107,9 +140,14 @@ fn sendMove(robot: *Robot, req: *httpz.Request, res: *httpz.Response) !void {
 }
 
 fn sendToAxis(robot: *Robot, device: []const u8, axis: u8, value: i64) !void {
+    std.log.debug("Opening serial port {s} for axis {c}", .{ device, axis });
+
     // Open serial port
     const fd = c.open(device.ptr, c.O_RDWR | c.O_NOCTTY);
-    if (fd < 0) return error.CannotOpenSerial;
+    if (fd < 0) {
+        std.log.err("Cannot open serial port {s}", .{device});
+        return error.CannotOpenSerial;
+    }
     defer _ = c.close(fd);
 
     // Configure serial port
@@ -137,31 +175,30 @@ fn sendToAxis(robot: *Robot, device: []const u8, axis: u8, value: i64) !void {
     var buf: [32]u8 = undefined;
     const msg = try std.fmt.bufPrint(&buf, "{d}.0\n", .{value});
 
-    _ = c.write(fd, msg.ptr, msg.len);
+    const bytes_written = c.write(fd, msg.ptr, msg.len);
+    std.log.debug("Sent {s} to {c} axis ({d} bytes)", .{ msg[0 .. msg.len - 1], axis, bytes_written });
 
-    // Read response (blocking until Pico sends "200")
-    var response: [16]u8 = undefined;
-    const bytes_read = c.read(fd, &response, response.len);
+    // TODO: Wait for Pico response (e.g. "200\n") before updating status
+    // Update position and status immediately (fire and forget)
+    robot.mutex.lock();
+    defer robot.mutex.unlock();
 
-    // Update position and status when done
-    if (bytes_read > 0) {
-        robot.mutex.lock();
-        defer robot.mutex.unlock();
-
-        switch (axis) {
-            'X' => {
-                robot.position.x = value;
-                robot.x_status = .idle;
-            },
-            'Y' => {
-                robot.position.y = value;
-                robot.y_status = .idle;
-            },
-            'Z' => {
-                robot.position.z = value;
-                robot.z_status = .idle;
-            },
-            else => {},
-        }
+    switch (axis) {
+        'X' => {
+            robot.position.x = value;
+            robot.x_status = .idle;
+            std.log.info("X axis moved to {d}", .{value});
+        },
+        'Y' => {
+            robot.position.y = value;
+            robot.y_status = .idle;
+            std.log.info("Y axis moved to {d}", .{value});
+        },
+        'Z' => {
+            robot.position.z = value;
+            robot.z_status = .idle;
+            std.log.info("Z axis moved to {d}", .{value});
+        },
+        else => {},
     }
 }
