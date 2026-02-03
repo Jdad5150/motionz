@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MotionZ WebSocket Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #eee; }
+    #status { padding: 10px; margin-bottom: 20px; }
+    #status.connected { color: #4f4; }
+    #status.disconnected { color: #f44; }
+    #data { background: #2a2a2a; padding: 15px; border-radius: 4px; white-space: pre; }
+    button { padding: 10px 20px; margin-right: 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>MotionZ WebSocket Test</h1>
+  <div id="status" class="disconnected">Disconnected</div>
+  <div>
+    <button onclick="connect()">Connect</button>
+    <button onclick="ping()">Send Ping</button>
+    <button onclick="disconnect()">Disconnect</button>
+  </div>
+  <h3>Response:</h3>
+  <div id="data">No data yet</div>
+
+  <script>
+    let ws = null;
+
+    function connect() {
+      if (ws) ws.close();
+      ws = new WebSocket('ws://localhost:5882/ws');
+
+      ws.onopen = () => {
+        document.getElementById('status').textContent = 'Connected';
+        document.getElementById('status').className = 'connected';
+      };
+
+      ws.onclose = () => {
+        document.getElementById('status').textContent = 'Disconnected';
+        document.getElementById('status').className = 'disconnected';
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        document.getElementById('data').textContent = JSON.stringify(data, null, 2);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+      };
+    }
+
+    function ping() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send('ping');
+      }
+    }
+
+    function disconnect() {
+      if (ws) ws.close();
+    }
+  </script>
+</body>
+</html>

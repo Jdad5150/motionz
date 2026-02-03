@@ -1,6 +1,6 @@
 .{
     .name = .zig_server,
-    .version = "0.0.1",
+    .version = "0.2.0",
     .dependencies = .{
         .httpz = .{
             .url = "git+https://github.com/karlseguin/http.zig?ref=master#9ef2ffe8d611ff2e1081e5cf39cb4632c145c5b9",

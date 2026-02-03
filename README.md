@@ -26,6 +26,7 @@ motionz provides a RESTful API for real-time robot arm control and position moni
 ## Features
 
 - **RESTful API**: Simple HTTP endpoints for position polling and movement commands
+- **WebSocket Support**: Real-time position streaming via `/ws` endpoint for live visualization and DRL training
 - **Per-Axis Control**: Independent X, Y, Z axis movement with individual status tracking
 - **Thread-Safe**: Mutex-protected state management for concurrent operations
 - **Real-Time Monitoring**: Poll current position and movement status at any frequency
@@ -71,6 +72,32 @@ Send movement commands to one or more axes.
 - All fields are optional - send only the axes you want to move
 - Commands are non-blocking - the endpoint returns immediately
 - Poll `/api/position` to monitor movement progress
+
+### WebSocket `/ws`
+Real-time position streaming for live visualization and data collection.
+
+**Connect:**
+```javascript
+const ws = new WebSocket('ws://localhost:5882/ws');
+```
+
+**Send:** `ping`
+
+**Response:**
+```json
+{
+  "position": { "x": 100.5, "y": 200.0, "z": 50.0 },
+  "x_status": "idle",
+  "y_status": "moving",
+  "z_status": "idle",
+  "status": "moving"
+}
+```
+
+**Notes:**
+- Send `ping` to receive current robot state
+- Responses are atomic snapshots (mutex-protected)
+- Suitable for high-frequency polling (100Hz+) for DRL training data collection
 
 ## Serial Protocol
 
@@ -173,7 +200,7 @@ Robot {
 ## Future Enhancements
 
 - [ ] Encoder feedback for real-time position updates during movement
-- [ ] WebSocket support for push-based position streaming
+- [x] WebSocket support for push-based position streaming
 - [ ] Movement queue for sequential operations
 - [ ] Configurable acceleration/deceleration profiles
 - [ ] Emergency stop endpoint
@@ -191,3 +218,18 @@ MIT
 ## Author
 
 Built with Zig for high-performance, low-latency robot control.
+
+
+## Pi Startup Checks
+
+Before running the server, verify the Pi's UART configuration is correct:
+
+| Step | Command | Expected Result |
+|------|---------|-----------------|
+| **Check baud rate** | `stty -F /dev/serial0` | Output includes `speed 115200 baud` |
+| **Set baud rate** (if needed) | `stty -F /dev/serial0 115200 raw -echo` | No output (silent success) |
+| **Verify UART devices** | `ls /dev/serial0 /dev/ttyAMA*` | Lists `/dev/serial0` and `ttyAMA` devices |
+| **Test communication** | `echo "toggle" > /dev/serial0` | LED on Pico toggles |
+| **Check permissions** | `groups` | `dialout` appears in the list |
+
+> **Tip:** If your user is not in the `dialout` group, add it with `sudo usermod -a -G dialout $USER` and log out/back in.
